@@ -1,7 +1,7 @@
 /**
  * Document Store — Multi-category Blob-based storage for after-sales knowledge base.
  *
- * Storage layout (EdgeOne Pages Blob):
+ * Storage layout (EdgeOne Makers Blob):
  *   aftersales-kb/summary/{category}/{docId}.json → DocSummary
  *   aftersales-kb/docs/{category}/{docId}.txt     → full document content
  *

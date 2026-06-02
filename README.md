@@ -1,6 +1,9 @@
 # After-Sales Assistant
 
-AI-powered after-sales customer service agent with knowledge base retrieval (RAG), order management tools, and interactive UI cards. Built on [EdgeOne Pages](https://edgeone.ai) Agent platform with LangGraph.js state machine.
+AI-powered after-sales customer service agent with knowledge base retrieval (RAG), order management tools, and interactive UI cards. Built on [EdgeOne Makers](https://edgeone.ai) Agent platform with LangGraph.js state machine.
+
+## Deploy
+[![Deploy to EdgeOne Makers](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/makers/new?template=after-sales-assistant&from=within&fromAgent=1&agentLang=typescript)
 
 ## Features
 
@@ -22,7 +25,7 @@ AI-powered after-sales customer service agent with knowledge base retrieval (RAG
 | Agent Framework | LangGraph.js | StateGraph conditional routing |
 | LLM | LangChain.js (`@langchain/openai`) | Via AI Gateway |
 | Storage | `@edgeone/pages-blob` + langgraphStore | Knowledge base + workflow state |
-| Platform | EdgeOne Pages | Cloud Functions, Memory API, Blob Storage |
+| Platform | EdgeOne Makers | Cloud Functions, Memory API, Blob Storage |
 
 ## Quick Start
 
@@ -35,7 +38,7 @@ cp .env.example .env
 # Set AI_GATEWAY_API_KEY, AI_GATEWAY_BASE_URL, PROJECT_ID, EDGEONE_PAGES_API_TOKEN
 
 # Start development server
-edgeone pages dev
+EdgeOne Makers dev
 ```
 
 ## Architecture
@@ -108,7 +111,7 @@ after-sales-assistant-edgeone/
 ## Deployment
 
 ```bash
-edgeone pages deploy
+EdgeOne Makers deploy
 ```
 
 ## License

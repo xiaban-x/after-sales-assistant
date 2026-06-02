@@ -1,6 +1,9 @@
-# 售后客服助手 - EdgeOne Pages AI Agent Template
+# 售后客服助手 - EdgeOne Makers AI Agent Template
 
-基于 [LangGraph](https://langchain-ai.github.io/langgraphjs/) StateGraph 工作流引擎构建的智能售后客服助手，部署在 [EdgeOne Pages](https://edgeone.ai) Agent 平台。支持订单查询、退款/换货申请、知识库问答，并内置可视化知识库管理面板。
+基于 [LangGraph](https://langchain-ai.github.io/langgraphjs/) StateGraph 工作流引擎构建的智能售后客服助手，部署在 [EdgeOne Makers](https://edgeone.ai) Agent 平台。支持订单查询、退款/换货申请、知识库问答，并内置可视化知识库管理面板。
+
+## 部署
+[![使用 EdgeOne Makers 部署](https://cdnstatic.tencentcs.com/edgeone/pages/deploy.svg)](https://console.cloud.tencent.com/edgeone/makers/new?template=after-sales-assistant&from=within&fromAgent=1&agentLang=typescript)
 
 ## 功能特性
 
@@ -106,7 +109,7 @@ after-sales-assistant-edgeone/
 
 ## 知识库
 
-文档分为四个类别，统一存储在 EdgeOne Pages Blob（`aftersales-kb` bucket）：
+文档分为四个类别，统一存储在 EdgeOne Makers Blob（`aftersales-kb` bucket）：
 
 | 类别 | 说明 | 示例 |
 |------|------|------|
@@ -141,7 +144,7 @@ after-sales-assistant-edgeone/
 data: [DONE]
 ```
 
-## EdgeOne Pages 平台能力
+## EdgeOne Makers 平台能力
 
 | 能力 | API | 用途 |
 |------|-----|------|
