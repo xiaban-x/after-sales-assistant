@@ -1,5 +1,5 @@
 /**
- * Document Upload Agent — handles document upload for the after-sales knowledge base.
+ * Document Upload — handles document upload for the after-sales knowledge base.
  *
  * Accepts POST with:
  * - file (base64 content) + filename + category
@@ -8,9 +8,9 @@
  * Streams progress via SSE: parsing → summarizing → saved.
  */
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { createLogger, createModel, sseEvent, createSSEResponse } from "./_shared";
-import { saveDoc, findDocByFilename, removeDoc, type DocCategory } from "../lib/doc-store";
-import { parseDocument } from "../lib/parser";
+import { createLogger, createModel, sseEvent, createSSEResponse } from "../../agents/_shared";
+import { saveDoc, findDocByFilename, removeDoc, type DocCategory } from "../../lib/doc-store";
+import { parseDocument } from "../../lib/parser";
 
 const logger = createLogger("upload");
 

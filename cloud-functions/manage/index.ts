@@ -1,5 +1,5 @@
 /**
- * Document Management Agent — list, get, delete, edit documents in the knowledge base.
+ * Document Management — list, get, delete, edit documents in the knowledge base.
  *
  * Accepts POST with `action` field:
  * - action: "list" + optional category → return all docs (or filtered)
@@ -8,14 +8,14 @@
  * - action: "edit" + docId + category + content + title → update content, regenerate summary
  */
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { createLogger, createModel } from "./_shared";
+import { createLogger, createModel } from "../../agents/_shared";
 import {
   getAllSummaries,
   getDocContent,
   removeDoc,
   saveDoc,
   type DocCategory,
-} from "../lib/doc-store";
+} from "../../lib/doc-store";
 
 const logger = createLogger("manage");
 

@@ -2,9 +2,9 @@
  * Seed demo documents into the knowledge base.
  * One-click import of sample after-sales documents.
  */
-import { createLogger, createModel, createSSEResponse, sseEvent } from "./_shared";
-import { DEMO_DOCS } from "./_data/demo-docs";
-import { saveDoc, getAllSummaries } from "../lib/doc-store";
+import { createLogger, createModel, createSSEResponse, sseEvent } from "../../agents/_shared";
+import { DEMO_DOCS } from "../../agents/_data/demo-docs";
+import { saveDoc, getAllSummaries } from "../../lib/doc-store";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 
 const logger = createLogger("seed-demo");
