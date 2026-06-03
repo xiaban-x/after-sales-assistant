@@ -145,7 +145,7 @@ export async function saveDoc(
   arg3: string,
   arg4: string,
   arg5?: string,
-  arg6?: string,
+  arg6?: string | string[],
   arg7?: string[]
 ): Promise<void> {
   let store: any, category: DocCategory, docId: string, filename: string, content: string, summary: string, keywords: string[];
@@ -166,7 +166,7 @@ export async function saveDoc(
     docId = arg3;
     filename = arg4;
     content = arg5;
-    summary = arg6 || "";
+    summary = (arg6 as string) || "";
     keywords = arg7 || [];
   }
 

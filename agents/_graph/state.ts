@@ -3,9 +3,13 @@
  */
 import { Annotation } from "@langchain/langgraph";
 import type { Order } from "../_shared";
+import type { Locale } from "../_i18n";
 
 export const AfterSalesState = Annotation.Root({
   userInput: Annotation<string>({ reducer: (_, n) => n, default: () => "" }),
+
+  // User locale (for i18n response generation)
+  locale: Annotation<Locale>({ reducer: (_, n) => n, default: () => "zh" }),
 
   // Intent classification
   intent: Annotation<"faq" | "lookup_order" | "refund" | "exchange" | "general" | null>({

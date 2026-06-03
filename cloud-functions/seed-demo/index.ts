@@ -1,19 +1,27 @@
 /**
  * Seed demo documents into the knowledge base.
  * One-click import of sample after-sales documents.
+ * Locale-aware: imports DEMO_DOCS_EN/ORDERS_EN when body.locale === "en".
  */
 import { createLogger, createModel, createSSEResponse, sseEvent } from "../../agents/_shared";
-import { DEMO_DOCS, DEMO_ORDERS } from "../../agents/_data/demo-docs";
-import { saveDoc, getAllSummaries } from "../../lib/doc-store";
+import { getDemoDocs, getDemoOrders } from "../../agents/_data/demo-docs";
+import { saveDoc } from "../../lib/doc-store";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
+import { t, getLocale, type Locale } from "../../agents/_i18n";
 
 const logger = createLogger("seed-demo");
 
-async function generateSummary(title: string, content: string): Promise<{ summary: string; keywords: string[] }> {
+async function generateSummary(title: string, content: string, locale: Locale): Promise<{ summary: string; keywords: string[] }> {
   const model = createModel();
+  const sysPrompt = locale === "en"
+    ? `Generate a short summary (1-2 sentences) and 5 keywords for the document. Return JSON: {"summary":"...","keywords":["k1","k2","k3","k4","k5"]}`
+    : `为以下文档生成简短摘要（1-2句）和5个关键词。返回JSON：{"summary":"...","keywords":["k1","k2","k3","k4","k5"]}`;
+  const userPrompt = locale === "en"
+    ? `Title: ${title}\n\nContent: ${content.slice(0, 1500)}`
+    : `标题：${title}\n\n内容：${content.slice(0, 1500)}`;
   const response = await model.invoke([
-    new SystemMessage(`为以下文档生成简短摘要（1-2句）和5个关键词。返回JSON：{"summary":"...","keywords":["k1","k2","k3","k4","k5"]}`),
-    new HumanMessage(`标题：${title}\n\n内容：${content.slice(0, 1500)}`),
+    new SystemMessage(sysPrompt),
+    new HumanMessage(userPrompt),
   ]);
   const text = typeof response.content === "string" ? response.content : "";
   try {
@@ -23,11 +31,17 @@ async function generateSummary(title: string, content: string): Promise<{ summar
   return { summary: content.slice(0, 100), keywords: [title] };
 }
 
-async function* streamSeedDemo(store: any): AsyncGenerator<string> {
+async function* streamSeedDemo(store: any, locale: Locale): AsyncGenerator<string> {
   const kv = store?.langgraphStore ?? store;
+  const DEMO_DOCS = getDemoDocs(locale);
+  const DEMO_ORDERS = getDemoOrders(locale);
 
   const total = DEMO_DOCS.length + DEMO_ORDERS.length;
-  yield sseEvent({ type: "progress", message: `开始导入 ${DEMO_DOCS.length} 篇文档 + ${DEMO_ORDERS.length} 个订单...`, total });
+  yield sseEvent({
+    type: "progress",
+    message: t(locale, "seed.start", { docs: DEMO_DOCS.length, orders: DEMO_ORDERS.length }),
+    total,
+  });
 
   let imported = 0;
   let failed = 0;
@@ -35,16 +49,17 @@ async function* streamSeedDemo(store: any): AsyncGenerator<string> {
   // ─── Import knowledge base documents ───
   for (const doc of DEMO_DOCS) {
     const docId = `demo-${doc.category}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const stepNum = imported + failed + 1;
 
     yield sseEvent({
       type: "progress",
-      message: `[${imported + failed + 1}/${total}] 正在生成索引: ${doc.title}`,
-      current: imported + failed + 1,
+      message: t(locale, "seed.indexing", { i: stepNum, n: total, title: doc.title }),
+      current: stepNum,
       total,
     });
 
     try {
-      const { summary, keywords } = await generateSummary(doc.title, doc.content);
+      const { summary, keywords } = await generateSummary(doc.title, doc.content, locale);
       await saveDoc(store, doc.category, docId, doc.title, doc.content, summary, keywords);
       imported++;
       yield sseEvent({ type: "doc_imported", docId, title: doc.title, category: doc.category, summary });
@@ -60,7 +75,6 @@ async function* streamSeedDemo(store: any): AsyncGenerator<string> {
   const ORDERS_MANIFEST_NS = ["aftersales", "orders_manifest"];
   const importedOrderIds: string[] = [];
 
-  // Read existing manifest first (so we merge instead of overwriting)
   let existingIds: string[] = [];
   try {
     const existingIdx = await kv.get(ORDERS_MANIFEST_NS, "all").catch(() => null);
@@ -68,10 +82,12 @@ async function* streamSeedDemo(store: any): AsyncGenerator<string> {
   } catch {}
 
   for (const order of DEMO_ORDERS) {
+    const stepNum = imported + failed + 1;
+
     yield sseEvent({
       type: "progress",
-      message: `[${imported + failed + 1}/${total}] 导入订单: ${order.orderId}`,
-      current: imported + failed + 1,
+      message: t(locale, "seed.importingOrder", { i: stepNum, n: total, orderId: order.orderId }),
+      current: stepNum,
       total,
     });
 
@@ -79,7 +95,6 @@ async function* streamSeedDemo(store: any): AsyncGenerator<string> {
       await kv.put(ORDERS_NS, order.orderId, { ...order });
       importedOrderIds.push(order.orderId);
 
-      // Update manifest after each successful order write (defensive — partial failure recovery)
       const allIds = [...new Set([...existingIds, ...importedOrderIds])];
       try {
         await kv.put(ORDERS_MANIFEST_NS, "all", { ids: allIds });
@@ -95,12 +110,15 @@ async function* streamSeedDemo(store: any): AsyncGenerator<string> {
     }
   }
 
-  logger.log(`Orders imported: ${importedOrderIds.length}, manifest now has ${importedOrderIds.length + existingIds.filter(id => !importedOrderIds.includes(id)).length} ids`);
+  logger.log(`[${locale}] Orders imported: ${importedOrderIds.length}`);
 
   if (imported === 0 && failed > 0) {
-    yield sseEvent({ type: "error_message", content: `导入失败，共 ${failed} 条数据写入出错，请检查存储配置。` });
+    yield sseEvent({ type: "error_message", content: t(locale, "seed.failure", { failed }) });
   } else {
-    yield sseEvent({ type: "progress", message: `导入完成！成功 ${imported} 条${failed > 0 ? `，失败 ${failed} 条` : ""}` });
+    const message = failed > 0
+      ? t(locale, "seed.successWithFailures", { imported, failed })
+      : t(locale, "seed.successOnly", { imported });
+    yield sseEvent({ type: "progress", message });
     yield sseEvent({ type: "complete", total: imported, failed, skipped: false });
   }
   yield "data: [DONE]\n\n";
@@ -114,7 +132,6 @@ export async function onRequest(context: any) {
     });
   }
 
-  // Get store (cloud-functions use context.agent?.store)
   const store = context.agent?.store ?? context.store ?? null;
   if (!store) {
     return new Response(JSON.stringify({
@@ -123,8 +140,10 @@ export async function onRequest(context: any) {
     }), { status: 503, headers: { "Content-Type": "application/json" } });
   }
 
-  logger.log("Seeding demo documents...");
+  const body = context.request?.body ?? {};
+  const locale = getLocale(body);
+  logger.log(`Seeding demo documents (locale=${locale})...`);
   const signal = context.request?.signal as AbortSignal | undefined;
-  const generator = streamSeedDemo(store);
+  const generator = streamSeedDemo(store, locale);
   return createSSEResponse(generator, signal);
 }

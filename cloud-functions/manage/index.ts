@@ -24,7 +24,7 @@ const VALID_CATEGORIES: DocCategory[] = ["faq", "policy", "product", "order_doc"
 // Order ID pattern (e.g. ORD-20250520-001) — same as backend nodes.ts
 const ORDER_FILENAME_RE = /^ORD-\d{8}-\d{3,}/i;
 
-/** Parse structured fields from a free-text order_doc body. */
+/** Parse structured fields from a free-text order_doc body. Bilingual keywords. */
 function parseOrderDocFields(content: string): {
   totalAmount?: number;
   carrier?: string;
@@ -34,27 +34,30 @@ function parseOrderDocFields(content: string): {
 } {
   const result: any = {};
 
-  const amountMatch = content.match(/金额[：:]\s*¥?\s*(\d+(?:\.\d+)?)/);
+  // 金额：¥1299  / Amount: ¥1299
+  const amountMatch = content.match(/(?:金额|Amount|Total)[：:]\s*¥?\s*(\d+(?:\.\d+)?)/i);
   if (amountMatch) result.totalAmount = parseFloat(amountMatch[1]);
 
-  // 快递：顺丰速运 SF1234567890  → carrier="顺丰速运" trackingNumber="SF1234567890"
-  const expressMatch = content.match(/快递[：:]\s*(\S+?)\s+([A-Za-z0-9-]+)/);
+  // 快递：顺丰速运 SF1234567890  / Shipping: SF Express SF1234567890
+  const expressMatch = content.match(/(?:快递|Shipping|Carrier)[：:]\s*(\S+?)\s+([A-Za-z0-9-]+)/i);
   if (expressMatch) {
     result.carrier = expressMatch[1];
     result.trackingNumber = expressMatch[2];
   } else {
-    const carrierOnly = content.match(/快递[：:]\s*(\S+)/);
+    const carrierOnly = content.match(/(?:快递|Shipping|Carrier)[：:]\s*(\S+)/i);
     if (carrierOnly) result.carrier = carrierOnly[1];
   }
 
-  const productMatch = content.match(/商品[：:]\s*([^\n]+)/);
+  // 商品：xxx  / Product: xxx
+  const productMatch = content.match(/(?:商品|Product|Item)[：:]\s*([^\n]+)/i);
   if (productMatch) result.itemNames = productMatch[1].trim();
 
-  if (content.includes("换货申请")) result.status = "exchange_requested";
-  else if (content.includes("退款申请") || content.includes("退款中")) result.status = "refund_requested";
-  else if (content.includes("已签收") || content.includes("已收货") || content.includes("签收")) result.status = "delivered";
-  else if (content.includes("运输中") || content.includes("已发货") || content.includes("在途")) result.status = "shipped";
-  else if (content.includes("待发货") || content.includes("未发货")) result.status = "pending";
+  const lower = content.toLowerCase();
+  if (content.includes("换货申请") || lower.includes("exchange request") || lower.includes("exchange_requested")) result.status = "exchange_requested";
+  else if (content.includes("退款申请") || content.includes("退款中") || lower.includes("refund request") || lower.includes("refund_requested")) result.status = "refund_requested";
+  else if (content.includes("已签收") || content.includes("已收货") || content.includes("签收") || lower.includes("delivered")) result.status = "delivered";
+  else if (content.includes("运输中") || content.includes("已发货") || content.includes("在途") || lower.includes("shipped") || lower.includes("in transit")) result.status = "shipped";
+  else if (content.includes("待发货") || content.includes("未发货") || lower.includes("pending")) result.status = "pending";
 
   return result;
 }

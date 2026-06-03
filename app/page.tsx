@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { ChatPanel } from "./components/chat-panel";
 import { ManagePanel } from "./components/manage-panel";
+import { useT } from "../lib/i18n";
 
 interface HealthStatus {
   ok: boolean;
@@ -12,6 +13,7 @@ interface HealthStatus {
 }
 
 export default function Home() {
+  const { t, locale, setLocale } = useT();
   const [showManage, setShowManage] = useState(false);
   const [health, setHealth] = useState<HealthStatus | null>(null);
 
@@ -31,15 +33,15 @@ export default function Home() {
         <div className="flex-shrink-0 bg-amber-50 border-b border-amber-200 px-4 py-2 flex items-center gap-2.5">
           <span className="text-amber-500 text-sm flex-shrink-0">⚠️</span>
           <div className="flex-1 min-w-0">
-            <span className="text-[12px] text-amber-800 font-medium">环境变量未配置，部分功能不可用。</span>
-            {!health.hasAiGateway && health.missing.length > 0 && (
+            <span className="text-[12px] text-amber-800 font-medium">{t("ui.warn.envMissing")}</span>
+            {!health.hasAiGateway && (health.missing?.length ?? 0) > 0 && (
               <span className="text-[11px] text-amber-600 ml-1.5">
-                缺少：{health.missing.join("、")}
+                {t("ui.warn.missing", { names: (health.missing ?? []).join(locale === "en" ? ", " : "、") })}
               </span>
             )}
             {!health.hasStore && (
               <span className="text-[11px] text-amber-600 ml-1.5">
-                · 知识库存储不可用（需部署到 EdgeOne Makers）
+                {t("ui.warn.storeUnavailable")}
               </span>
             )}
           </div>
@@ -57,11 +59,18 @@ export default function Home() {
             AI
           </div>
           <div>
-            <h1 className="text-[15px] font-semibold text-gray-900 leading-tight">售后客服助手</h1>
-            <p className="text-[11px] text-gray-400 leading-tight">订单查询 · 退货退款 · 换货 · 政策咨询</p>
+            <h1 className="text-[15px] font-semibold text-gray-900 leading-tight">{t("ui.header.title")}</h1>
+            <p className="text-[11px] text-gray-400 leading-tight">{t("ui.header.subtitle")}</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <button
+            onClick={() => setLocale(locale === "en" ? "zh" : "en")}
+            className="text-[11px] px-2.5 py-1 rounded-md border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-colors"
+            title={locale === "en" ? "切换到中文" : "Switch to English"}
+          >
+            {t("ui.header.langSwitch")}
+          </button>
           <button
             onClick={() => setShowManage(!showManage)}
             className={`text-xs px-3.5 py-1.5 rounded-lg font-medium transition-all ${
@@ -70,26 +79,24 @@ export default function Home() {
                 : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
             }`}
           >
-            <span className="mr-1">📚</span> 知识库
+            <span className="mr-1">📚</span> {t("ui.header.kb")}
           </button>
           <span className="flex items-center gap-1.5 text-[11px] text-gray-400">
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
             </span>
-            在线
+            {t("ui.header.online")}
           </span>
         </div>
       </header>
 
       {/* Body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Chat */}
         <div className="flex-1 min-w-0">
           <ChatPanel />
         </div>
 
-        {/* Manage Panel — 贴右边缘，full height */}
         {showManage && (
           <aside className="w-[380px] flex-shrink-0 border-l border-gray-200/80 bg-white shadow-[-4px_0_12px_rgba(0,0,0,0.03)]">
             <ManagePanel onClose={() => setShowManage(false)} />

@@ -6,6 +6,7 @@ import { OrderCard } from "./cards/order-card";
 import { RefundCard } from "./cards/refund-card";
 import { ExchangeCard } from "./cards/exchange-card";
 import { FaqCard } from "./cards/faq-card";
+import { useT } from "../../lib/i18n";
 
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -20,7 +21,7 @@ interface SuggestAction {
   id: string;
   emoji: string;
   title: string;
-  action?: string; // If set, send this instead of title
+  action?: string;
 }
 
 interface Message {
@@ -39,25 +40,39 @@ function MarkdownBlock({ content }: { content: string }) {
 // ============ Component ============
 
 export function ChatPanel() {
-  const [messages, setMessages] = useState<Message[]>([{
+  const { t, locale } = useT();
+
+  // Initial welcome message — recompute when locale changes
+  const initialMessage = useMemo<Message>(() => ({
     role: "assistant",
-    content: "您好！我是售后客服助手，有什么可以帮您？\n\n如果是首次使用，请先打开右上角「知识库」一键导入演示数据。",
+    content: t("ui.chat.welcome"),
     suggestions: [
-      { id: "faq", emoji: "📋", title: "退货政策是什么？" },
-      { id: "order", emoji: "🔍", title: "查询订单状态" },
-      { id: "refund", emoji: "💰", title: "我要退款" },
-      { id: "exchange", emoji: "🔄", title: "我要换货" },
+      { id: "faq", emoji: "📋", title: t("sug.faqPolicy") },
+      { id: "order", emoji: "🔍", title: t("sug.lookupOrder") },
+      { id: "refund", emoji: "💰", title: t("sug.refund") },
+      { id: "exchange", emoji: "🔄", title: t("sug.exchange") },
     ],
-  }]);
+  }), [t]);
+
+  const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [currentStep, setCurrentStep] = useState("");
-  // pendingAction: carries intent context across turns when waiting for user to pick an order
   const [pendingAction, setPendingAction] = useState<{ intent: string } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
   const conversationId = useMemo(() => crypto.randomUUID(), []);
+
+  // When locale changes, refresh ONLY the initial welcome message (preserve conversation history)
+  useEffect(() => {
+    setMessages(prev => {
+      if (prev.length === 0) return [initialMessage];
+      const isOnlyWelcome = prev.length === 1 && prev[0].role === "assistant";
+      if (isOnlyWelcome) return [initialMessage];
+      return prev;
+    });
+  }, [initialMessage]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -69,14 +84,11 @@ export function ChatPanel() {
     const userMessage = content.trim();
     setMessages(prev => [...prev, { role: "user", content: userMessage }]);
     setIsLoading(true);
-    setCurrentStep("正在处理...");
+    setCurrentStep(t("ui.chat.processing"));
 
-    // Add assistant placeholder
     setMessages(prev => [...prev, { role: "assistant", content: "", cards: [] }]);
 
     abortControllerRef.current = new AbortController();
-
-    // Capture and clear pendingAction before the request
     const currentPendingAction = pendingAction;
     setPendingAction(null);
 
@@ -89,18 +101,18 @@ export function ChatPanel() {
         },
         body: JSON.stringify({
           message: userMessage,
-          // Pass pending action so backend can restore cross-turn context
+          locale,
           ...(currentPendingAction ? { pendingAction: currentPendingAction } : {}),
         }),
         signal: abortControllerRef.current.signal,
       });
 
       if (!response.ok) {
-        let errMsg = `请求失败 (${response.status})`;
+        let errMsg = t("ui.chat.errorRequest", { status: response.status });
         try {
           const errBody = await response.text();
           if (response.status === 429 || errBody.includes("quota")) {
-            errMsg = "⚠️ AI 模型调用额度已用尽，请稍后再试或升级套餐。";
+            errMsg = t("ui.chat.errorQuota");
           } else if (errBody) {
             errMsg = errBody.slice(0, 200);
           }
@@ -166,15 +178,13 @@ export function ChatPanel() {
                 }
                 break;
               case "pending_action":
-                // Store pending action context for the next user message
                 if (event.intent) {
                   setPendingAction({ intent: event.intent });
                 }
                 break;
               case "status":
                 if (event.status === "complete" && suggestions.length === 0) {
-                  // Auto-generate contextual suggestions based on what just happened
-                  suggestions = generateFollowUpSuggestions(lastCardType, assistantContent);
+                  suggestions = generateFollowUpSuggestions(lastCardType, assistantContent, t, locale);
                 }
                 break;
               case "ping":
@@ -184,7 +194,6 @@ export function ChatPanel() {
         }
       }
 
-      // Apply suggestions to the final message
       if (suggestions.length > 0) {
         setMessages(prev => {
           const copy = [...prev];
@@ -205,7 +214,7 @@ export function ChatPanel() {
         setMessages(prev => {
           const copy = [...prev];
           const last = copy[copy.length - 1];
-          if (last.role === "assistant") last.content = `出错了：${(e as Error).message}`;
+          if (last.role === "assistant") last.content = `${t("ui.chat.errorPrefix")}${(e as Error).message}`;
           return copy;
         });
       }
@@ -214,7 +223,7 @@ export function ChatPanel() {
       setCurrentStep("");
       abortControllerRef.current = null;
     }
-  }, [conversationId, isLoading]);
+  }, [conversationId, isLoading, locale, t, pendingAction]);
 
   const handleStop = useCallback(() => {
     abortControllerRef.current?.abort();
@@ -282,7 +291,6 @@ export function ChatPanel() {
                     )
                   )}
                   {msg.cards?.map((card, idx) => renderCard(card, idx))}
-                  {/* Suggestions */}
                   {msg.suggestions && msg.suggestions.length > 0 && !isLoading && (
                     <div className="flex flex-wrap gap-2 mt-2">
                       {msg.suggestions.map((s) => (
@@ -320,7 +328,7 @@ export function ChatPanel() {
                   handleSubmit(e as any);
                 }
               }}
-              placeholder="描述您的问题，或输入订单号查询..."
+              placeholder={t("ui.chat.placeholder")}
               disabled={isLoading}
               rows={1}
               className="w-full resize-none rounded-xl border border-gray-200 pl-4 pr-4 py-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-300 disabled:opacity-50 bg-gray-50/50 placeholder:text-gray-400 transition-all"
@@ -351,47 +359,48 @@ export function ChatPanel() {
   );
 }
 
-// ============ Smart Follow-up Suggestions ============
+// ============ Smart Follow-up Suggestions (fallback when backend doesn't supply) ============
 
-function generateFollowUpSuggestions(lastCardType: string, content: string): SuggestAction[] {
-  // Context-aware: after different operations, suggest relevant next actions
+function generateFollowUpSuggestions(
+  lastCardType: string,
+  content: string,
+  t: (key: string, params?: Record<string, string | number>) => string,
+  locale: string
+): SuggestAction[] {
   switch (lastCardType) {
     case "order_detail":
       return [
-        { id: "refund", emoji: "💰", title: "我要退款" },
-        { id: "exchange", emoji: "🔄", title: "我要换货" },
-        { id: "other", emoji: "❓", title: "还有其他问题" },
+        { id: "refund", emoji: "💰", title: t("sug.refund") },
+        { id: "exchange", emoji: "🔄", title: t("sug.exchange") },
       ];
     case "refund_progress":
       return [
-        { id: "status", emoji: "📦", title: "退款多久到账？" },
-        { id: "other_order", emoji: "🔍", title: "查询其他订单" },
-        { id: "done", emoji: "👍", title: "没有其他问题了" },
+        { id: "status", emoji: "📦", title: t("sug.timelineRefund") },
+        { id: "other_order", emoji: "🔍", title: t("sug.lookupOther") },
       ];
     case "exchange_confirm":
       return [
-        { id: "logistics", emoji: "🚚", title: "换货寄回地址？" },
-        { id: "timeline", emoji: "⏰", title: "换货需要多久？" },
-        { id: "done", emoji: "👍", title: "没有其他问题了" },
+        { id: "logistics", emoji: "🚚", title: t("sug.address") },
+        { id: "timeline", emoji: "⏰", title: t("sug.timelineExchange") },
       ];
     case "faq_sources":
       return [
-        { id: "more", emoji: "📋", title: "还有其他政策问题" },
-        { id: "order", emoji: "🔍", title: "查询我的订单" },
-        { id: "refund", emoji: "💰", title: "我要申请退款" },
+        { id: "order", emoji: "🔍", title: t("sug.lookupMyOrders") },
+        { id: "refund", emoji: "💰", title: t("sug.refundApply") },
       ];
     default:
-      // General follow-up based on content
-      if (content.includes("退款") || content.includes("退货")) {
+      // Bilingual keyword scan as a rough fallback
+      const c = content.toLowerCase();
+      if (content.includes("退款") || content.includes("退货") || c.includes("refund")) {
         return [
-          { id: "check", emoji: "🔍", title: "查看退款进度" },
-          { id: "other", emoji: "❓", title: "还有其他问题" },
+          { id: "faq", emoji: "📋", title: t("sug.faqGeneral") },
+          { id: "order", emoji: "🔍", title: t("sug.lookupMyOrders") },
         ];
       }
       return [
-        { id: "faq", emoji: "📋", title: "售后政策咨询" },
-        { id: "order", emoji: "🔍", title: "查询订单" },
-        { id: "refund", emoji: "💰", title: "退货退款" },
+        { id: "faq", emoji: "📋", title: t("sug.faqGeneral") },
+        { id: "order", emoji: "🔍", title: t("sug.lookupMyOrders") },
+        { id: "refund", emoji: "💰", title: t("sug.refundApply") },
       ];
   }
 }

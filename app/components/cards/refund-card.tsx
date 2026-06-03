@@ -1,6 +1,9 @@
 /**
  * Refund progress card — shows refund status and timeline.
  */
+"use client";
+
+import { useT } from "../../../lib/i18n";
 
 interface Order {
   orderId: string;
@@ -13,10 +16,12 @@ interface Order {
 }
 
 export function RefundCard({ order }: { order: Order }) {
+  const { t, locale } = useT();
+  const sep = locale === "en" ? ", " : "、";
   const steps = [
-    { label: "提交申请", done: true },
-    { label: "审核中", done: order.status !== "refund_requested" },
-    { label: "退款到账", done: order.status === "refund_completed" },
+    { label: t("ui.card.refund.step.submit"), done: true },
+    { label: t("ui.card.refund.step.review"), done: order.status !== "refund_requested" },
+    { label: t("ui.card.refund.step.complete"), done: order.status === "refund_completed" },
   ];
 
   return (
@@ -24,34 +29,32 @@ export function RefundCard({ order }: { order: Order }) {
       <div className="px-4 py-3 bg-orange-50 border-b border-orange-100">
         <div className="flex items-center gap-2">
           <span className="text-orange-500 text-lg">💰</span>
-          <span className="text-sm font-medium text-orange-800">退款进度</span>
+          <span className="text-sm font-medium text-orange-800">{t("ui.card.refund.title")}</span>
         </div>
       </div>
 
       <div className="px-4 py-3 space-y-3">
-        {/* Info */}
         <div className="space-y-1 text-sm">
           <div className="flex justify-between">
-            <span className="text-gray-500">订单号</span>
+            <span className="text-gray-500">{t("ui.card.refund.orderId")}</span>
             <span className="font-mono text-gray-700">{order.orderId}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">商品</span>
-            <span className="text-gray-700">{order.items.map(i => i.name).join("、")}</span>
+            <span className="text-gray-500">{t("ui.card.refund.product")}</span>
+            <span className="text-gray-700">{order.items.map(i => i.name).join(sep)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-gray-500">退款金额</span>
+            <span className="text-gray-500">{t("ui.card.refund.amount")}</span>
             <span className="font-semibold text-orange-600">¥{order.refundAmount || order.totalAmount}</span>
           </div>
           {order.refundReason && (
             <div className="flex justify-between">
-              <span className="text-gray-500">原因</span>
+              <span className="text-gray-500">{t("ui.card.refund.reason")}</span>
               <span className="text-gray-700">{order.refundReason}</span>
             </div>
           )}
         </div>
 
-        {/* Progress steps */}
         <div className="flex items-center justify-between px-2 pt-2">
           {steps.map((step, i) => (
             <div key={step.label} className="flex items-center gap-1">

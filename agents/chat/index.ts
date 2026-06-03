@@ -3,21 +3,24 @@
  *
  * Uses LangGraph for intent routing + tool execution.
  * Emits SSE events including UI card events for the frontend to render.
+ * All user-facing strings respect body.locale ("zh" | "en").
  */
 import { createLogger, createSSEResponse, sseEvent, saveOrder, getOrder } from "../_shared";
 import { buildAfterSalesGraph } from "../_graph/builder";
 import { setGlobalStore } from "../../lib/doc-store";
+import { t, getLocale, type Locale } from "../_i18n";
 import type { AfterSalesStateType } from "../_graph/state";
 
 const logger = createLogger("chat");
 
-const STEP_LABELS: Record<string, string> = {
-  intent_recognition: "正在理解您的问题...",
-  faq_search: "正在查找相关政策...",
-  lookup_order: "正在查询订单...",
-  request_refund: "正在处理退款申请...",
-  request_exchange: "正在处理换货申请...",
-  general_chat: "正在思考...",
+// Step keys map to nodeName → translation key
+const STEP_KEYS: Record<string, string> = {
+  intent_recognition: "step.intent_recognition",
+  faq_search: "step.faq_search",
+  lookup_order: "step.lookup_order",
+  request_refund: "step.request_refund",
+  request_exchange: "step.request_exchange",
+  general_chat: "step.general_chat",
 };
 
 // ─── State Persistence ───
@@ -46,25 +49,21 @@ async function* streamAfterSales(
   userMessage: string,
   context: any,
   pendingAction: { intent: string } | null,
+  locale: Locale,
   signal?: AbortSignal
 ): AsyncGenerator<string> {
   const conversationId = context.conversation_id || "default";
 
-  // Make store available to graph nodes (nodes can't receive context directly)
   setGlobalStore(context.store);
 
   const graph = buildAfterSalesGraph();
-
-  // Load prior state (for multi-turn: keep currentOrder context)
   const priorState = await loadState(context, conversationId);
 
-  // Pre-load order from store if we have an orderId (since graph nodes can't access context)
   let preloadedOrder = priorState?.currentOrder || null;
   if (priorState?.orderId && !preloadedOrder) {
     preloadedOrder = await getOrder(context, priorState.orderId) || null;
   }
 
-  // pendingAction from request body takes highest priority (most reliable cross-turn context)
   const restoredIntent = (pendingAction?.intent as AfterSalesStateType["intent"]) ?? priorState?.intent ?? null;
   const restoredWaiting = pendingAction ? true : (priorState?.waitingForUser ?? false);
 
@@ -72,11 +71,11 @@ async function* streamAfterSales(
     ...(priorState || pendingAction ? {
       currentOrder: preloadedOrder,
       orderId: priorState?.orderId,
-      // Restore conversation context so intent recognition can use it
       intent: restoredIntent,
       waitingForUser: restoredWaiting,
     } : {}),
     userInput: userMessage,
+    locale,
     aiResponse: "",
     cardEvent: null,
   };
@@ -91,31 +90,28 @@ async function* streamAfterSales(
       const nodeOutput = output as Partial<AfterSalesStateType>;
       lastState = { ...lastState, ...nodeOutput };
 
-      // Emit workflow step
-      const label = STEP_LABELS[nodeName] || nodeName;
+      const labelKey = STEP_KEYS[nodeName];
+      const label = labelKey ? t(locale, labelKey) : nodeName;
       yield sseEvent({ type: "workflow_step", step: nodeName, label });
 
-      // Emit card event if present
       if (nodeOutput.cardEvent) {
         yield sseEvent({ type: "card", cardType: nodeOutput.cardEvent.type, data: nodeOutput.cardEvent.data });
       }
 
-      // Emit AI text response
       if (nodeOutput.aiResponse && nodeOutput.aiResponse.trim()) {
         yield sseEvent({ type: "ai_response", content: nodeOutput.aiResponse });
       }
     }
   }
 
-  // Save state for next turn (include intent + waitingForUser for context continuity)
   await saveState(context, conversationId, {
     currentOrder: lastState.currentOrder,
     orderId: lastState.orderId,
     intent: lastState.intent,
     waitingForUser: lastState.waitingForUser,
+    locale,
   });
 
-  // Persist order changes (refund/exchange status) — graph nodes can't access context directly
   if (lastState.currentOrder && (
     lastState.currentOrder.status === "refund_requested" ||
     lastState.currentOrder.status === "exchange_requested"
@@ -124,7 +120,6 @@ async function* streamAfterSales(
     logger.log(`Order ${lastState.currentOrder.orderId} status updated to ${lastState.currentOrder.status}`);
   }
 
-  // Save to memory
   try {
     await context.store.appendMessage({ conversationId, role: "user", content: userMessage });
     if (lastState.aiResponse) {
@@ -132,13 +127,11 @@ async function* streamAfterSales(
     }
   } catch {}
 
-  // Emit smart follow-up suggestions based on the completed action
-  const suggestions = generateSuggestions(lastState);
+  const suggestions = generateSuggestions(lastState, locale);
   if (suggestions.length > 0) {
     yield sseEvent({ type: "suggest_actions", actions: suggestions });
   }
 
-  // Emit pending_action if we're waiting for user to pick an order (reliable cross-turn context)
   if (lastState.waitingForUser && lastState.intent) {
     yield sseEvent({ type: "pending_action", intent: lastState.intent });
   }
@@ -153,6 +146,7 @@ export async function onRequest(context: any) {
   const { request } = context;
   const body = request?.body ?? {};
   const { message, pendingAction } = body;
+  const locale = getLocale(body);
 
   if (!message) {
     return new Response(JSON.stringify({ error: "Missing message" }), {
@@ -167,16 +161,16 @@ export async function onRequest(context: any) {
     }), { status: 503, headers: { "Content-Type": "application/json" } });
   }
 
-  logger.log(`Chat: "${(message as string).slice(0, 80)}..."`);
+  logger.log(`Chat (${locale}): "${(message as string).slice(0, 80)}..."`);
 
   const signal = request?.signal as AbortSignal | undefined;
-  const generator = streamAfterSales(message, context, pendingAction ?? null, signal);
+  const generator = streamAfterSales(message, context, pendingAction ?? null, locale, signal);
   return createSSEResponse(generator, signal);
 }
 
-// ─── Smart Suggestions ───
+// ─── Smart Suggestions (locale-aware) ───
 
-function generateSuggestions(state: Partial<AfterSalesStateType>): Array<{ id: string; emoji: string; title: string; action?: string }> {
+function generateSuggestions(state: Partial<AfterSalesStateType>, locale: Locale): Array<{ id: string; emoji: string; title: string; action?: string }> {
   const intent = state.intent;
   const order = state.currentOrder;
   const orderId = state.orderId;
@@ -185,53 +179,51 @@ function generateSuggestions(state: Partial<AfterSalesStateType>): Array<{ id: s
     if (order && orderId) {
       if (order.status === "delivered") {
         return [
-          { id: "refund", emoji: "💰", title: "我要退款", action: `我要退 ${orderId} 的款` },
-          { id: "exchange", emoji: "🔄", title: "我要换货", action: `我要换 ${orderId} 的货` },
+          { id: "refund", emoji: "💰", title: t(locale, "sug.refund"), action: t(locale, "sug.refundActionTpl", { orderId }) },
+          { id: "exchange", emoji: "🔄", title: t(locale, "sug.exchange"), action: t(locale, "sug.exchangeActionTpl", { orderId }) },
         ];
       }
       if (order.status === "shipped") {
         return [
-          { id: "refund", emoji: "💰", title: "我要退款", action: `我要退 ${orderId} 的款` },
-          { id: "delivery", emoji: "🚚", title: "预计什么时候到？", action: `${orderId} 预计什么时候到？` },
+          { id: "refund", emoji: "💰", title: t(locale, "sug.refund"), action: t(locale, "sug.refundActionTpl", { orderId }) },
+          { id: "delivery", emoji: "🚚", title: t(locale, "sug.delivery"), action: t(locale, "sug.deliveryActionTpl", { orderId }) },
         ];
       }
       if (order.status === "pending") {
         return [
-          { id: "eta", emoji: "📦", title: "什么时候发货？", action: `${orderId} 什么时候发货？` },
-          { id: "cancel", emoji: "❌", title: "我想取消订单", action: `我想取消订单 ${orderId}` },
+          { id: "eta", emoji: "📦", title: t(locale, "sug.eta"), action: t(locale, "sug.etaActionTpl", { orderId }) },
+          { id: "cancel", emoji: "❌", title: t(locale, "sug.cancel"), action: t(locale, "sug.cancelActionTpl", { orderId }) },
         ];
       }
-      // refund_requested / exchange_requested
       return [
-        { id: "status", emoji: "🔔", title: "最新进度怎么样？", action: `${orderId} 最新进度怎么样？` },
-        { id: "other", emoji: "🔍", title: "查询其他订单" },
+        { id: "status", emoji: "🔔", title: t(locale, "sug.status"), action: t(locale, "sug.statusActionTpl", { orderId }) },
+        { id: "other", emoji: "🔍", title: t(locale, "sug.lookupOther") },
       ];
     }
-    // No specific order found — general suggestions
     return [
-      { id: "faq", emoji: "📋", title: "售后政策咨询" },
-      { id: "refund", emoji: "💰", title: "我要申请退款" },
+      { id: "faq", emoji: "📋", title: t(locale, "sug.faqGeneral") },
+      { id: "refund", emoji: "💰", title: t(locale, "sug.refundApply") },
     ];
   }
 
   if (intent === "refund") {
     return [
-      { id: "timeline", emoji: "⏰", title: "退款多久到账？" },
-      { id: "other", emoji: "🔍", title: "查询其他订单" },
+      { id: "timeline", emoji: "⏰", title: t(locale, "sug.timelineRefund") },
+      { id: "other", emoji: "🔍", title: t(locale, "sug.lookupOther") },
     ];
   }
 
   if (intent === "exchange") {
     return [
-      { id: "address", emoji: "📮", title: "寄回地址是哪里？" },
-      { id: "timeline", emoji: "⏰", title: "换货需要多久？" },
+      { id: "address", emoji: "📮", title: t(locale, "sug.address") },
+      { id: "timeline", emoji: "⏰", title: t(locale, "sug.timelineExchange") },
     ];
   }
 
   if (intent === "faq") {
     return [
-      { id: "order", emoji: "🔍", title: "查询我的订单" },
-      { id: "refund", emoji: "💰", title: "申请退款" },
+      { id: "order", emoji: "🔍", title: t(locale, "sug.lookupMyOrders") },
+      { id: "refund", emoji: "💰", title: t(locale, "sug.refundApply") },
     ];
   }
 

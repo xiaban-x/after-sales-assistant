@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useT } from "../../lib/i18n";
 
 interface DocItem {
   docId: string;
@@ -38,17 +39,6 @@ interface OrderRecord {
   carrier?: string;
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  pending: "待发货",
-  shipped: "运输中",
-  delivered: "已签收",
-  refund_requested: "退款申请中",
-  refund_approved: "退款已批准",
-  refund_completed: "退款已完成",
-  exchange_requested: "换货申请中",
-  exchange_shipped: "换货已寄出",
-};
-
 const STATUS_COLORS: Record<string, string> = {
   pending: "bg-amber-50 text-amber-600",
   shipped: "bg-blue-50 text-blue-600",
@@ -60,79 +50,72 @@ const STATUS_COLORS: Record<string, string> = {
   exchange_shipped: "bg-purple-50 text-purple-600",
 };
 
-// Order ID pattern (e.g. ORD-20250520-001) — same as backend
+// Order ID pattern (e.g. ORD-20250520-001)
 const ORDER_FILENAME_RE = /^ORD-\d{8}-\d{3,}/i;
 
-/** Detect order status from free-text doc summary + keywords (mirrors backend nodes.ts) */
+/** Detect order status from free-text — bilingual keywords. */
 function detectStatusFromText(text: string): string | null {
-  const t = text;
-  if (t.includes("换货申请") || t.includes("exchange_requested")) return "exchange_requested";
-  if (t.includes("退款申请") || t.includes("退款中") || t.includes("refund_requested")) return "refund_requested";
-  if (t.includes("已签收") || t.includes("已收货") || t.includes("签收") || t.includes("delivered")) return "delivered";
-  if (t.includes("运输中") || t.includes("已发货") || t.includes("在途") || t.includes("shipped")) return "shipped";
-  if (t.includes("待发货") || t.includes("未发货") || t.includes("pending")) return "pending";
+  const lower = text.toLowerCase();
+  if (text.includes("换货申请") || lower.includes("exchange_requested") || lower.includes("exchange request")) return "exchange_requested";
+  if (text.includes("退款申请") || text.includes("退款中") || lower.includes("refund_requested") || lower.includes("refund request")) return "refund_requested";
+  if (text.includes("已签收") || text.includes("已收货") || text.includes("签收") || lower.includes("delivered")) return "delivered";
+  if (text.includes("运输中") || text.includes("已发货") || text.includes("在途") || lower.includes("shipped") || lower.includes("in transit")) return "shipped";
+  if (text.includes("待发货") || text.includes("未发货") || lower.includes("pending")) return "pending";
   return null;
 }
 
-const CATEGORIES = [
-  { value: "faq", label: "FAQ", icon: "💬", color: "blue" },
-  { value: "policy", label: "政策", icon: "📋", color: "amber" },
-  { value: "product", label: "产品", icon: "📦", color: "emerald" },
-  { value: "order_doc", label: "订单", icon: "🧾", color: "purple" },
-];
-
-// Example order data for Tab completion (title + content pairs)
-const ORDER_EXAMPLES = [
+// Order example data for Tab autocomplete — bilingual sets
+const ORDER_EXAMPLES_ZH = [
   {
     id: "ORD-20250520-001",
-    content: `商品：无线降噪耳机 Pro
-规格：黑色 / 标准版
-数量：1
-金额：¥1299
-状态：已签收
-下单时间：2025-05-20
-签收时间：2025-05-22
-快递：顺丰速运 SF1234567890
-备注：用户已确认收货`,
+    content: `商品：无线降噪耳机 Pro\n规格：黑色 / 标准版\n数量：1\n金额：¥1299\n状态：已签收\n下单时间：2025-05-20\n签收时间：2025-05-22\n快递：顺丰速运 SF1234567890\n备注：用户已确认收货`,
   },
   {
     id: "ORD-20250518-002",
-    content: `商品：智能手表 Ultra
-规格：钛金属 / 49mm
-数量：1
-金额：¥3999
-状态：运输中
-下单时间：2025-05-18
-快递：圆通快递 YT9876543210
-预计到达：2025-05-23
-备注：用户询问物流进度`,
+    content: `商品：智能手表 Ultra\n规格：钛金属 / 49mm\n数量：1\n金额：¥3999\n状态：运输中\n下单时间：2025-05-18\n快递：圆通快递 YT9876543210\n预计到达：2025-05-23\n备注：用户询问物流进度`,
   },
   {
     id: "ORD-20250515-003",
-    content: `商品：便携蓝牙音箱
-规格：星空蓝 / 标准版
-数量：2
-金额：¥598
-状态：已签收
-下单时间：2025-05-15
-签收时间：2025-05-17
-快递：韵达快递 YD1122334455
-备注：用户反映音质问题，申请换货`,
+    content: `商品：便携蓝牙音箱\n规格：星空蓝 / 标准版\n数量：2\n金额：¥598\n状态：已签收\n下单时间：2025-05-15\n签收时间：2025-05-17\n快递：韵达快递 YD1122334455\n备注：用户反映音质问题，申请换货`,
   },
   {
     id: "ORD-20250510-004",
-    content: `商品：机械键盘 87键
-规格：茶轴 / 黑色
-数量：1
-金额：¥499
-状态：待发货
-下单时间：2025-05-10
-预计发货：2025-05-25
-备注：库存紧张，等待补货`,
+    content: `商品：机械键盘 87键\n规格：茶轴 / 黑色\n数量：1\n金额：¥499\n状态：待发货\n下单时间：2025-05-10\n预计发货：2025-05-25\n备注：库存紧张，等待补货`,
+  },
+];
+
+const ORDER_EXAMPLES_EN = [
+  {
+    id: "ORD-20250520-001",
+    content: `Product: Wireless Noise-Cancelling Headphones Pro\nSpecs: Black / Standard\nQty: 1\nAmount: ¥1299\nStatus: Delivered\nOrdered: 2025-05-20\nDelivered: 2025-05-22\nShipping: SF Express SF1234567890\nNote: Customer confirmed receipt`,
+  },
+  {
+    id: "ORD-20250518-002",
+    content: `Product: Smart Watch Ultra\nSpecs: Titanium / 49mm\nQty: 1\nAmount: ¥3999\nStatus: Shipped\nOrdered: 2025-05-18\nShipping: YTO Express YT9876543210\nETA: 2025-05-23\nNote: Customer asking about delivery progress`,
+  },
+  {
+    id: "ORD-20250515-003",
+    content: `Product: Portable Bluetooth Speaker\nSpecs: Starry Blue / Standard\nQty: 2\nAmount: ¥598\nStatus: Delivered\nOrdered: 2025-05-15\nDelivered: 2025-05-17\nShipping: Yunda Express YD1122334455\nNote: Customer reports sound quality issue, requesting exchange`,
+  },
+  {
+    id: "ORD-20250510-004",
+    content: `Product: Mechanical Keyboard 87-key\nSpecs: Brown Switch / Black\nQty: 1\nAmount: ¥499\nStatus: Pending\nOrdered: 2025-05-10\nETA Shipping: 2025-05-25\nNote: Stock low, awaiting restock`,
   },
 ];
 
 export function ManagePanel({ onClose }: { onClose: () => void }) {
+  const { t, locale } = useT();
+
+  // Localized categories (recompute on locale change)
+  const CATEGORIES = useMemo(() => [
+    { value: "faq", label: t("ui.manage.cat.faq"), icon: "💬", color: "blue" },
+    { value: "policy", label: t("ui.manage.cat.policy"), icon: "📋", color: "amber" },
+    { value: "product", label: t("ui.manage.cat.product"), icon: "📦", color: "emerald" },
+    { value: "order_doc", label: t("ui.manage.cat.order_doc"), icon: "🧾", color: "purple" },
+  ], [t]);
+
+  const ORDER_EXAMPLES = locale === "en" ? ORDER_EXAMPLES_EN : ORDER_EXAMPLES_ZH;
+
   const [docs, setDocs] = useState<DocItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeCategory, setActiveCategory] = useState<string>("all");
@@ -154,14 +137,13 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
   const loadDocsAbortRef = useRef<AbortController | null>(null);
 
   const loadDocs = useCallback(async () => {
-    // Cancel any in-flight request for the previous tab
     loadDocsAbortRef.current?.abort();
     const ac = new AbortController();
     loadDocsAbortRef.current = ac;
 
     setIsLoading(true);
     try {
-      const body: any = { action: "list" };
+      const body: any = { action: "list", locale };
       if (activeCategory !== "all") body.category = activeCategory;
       const res = await fetch("/manage", {
         method: "POST",
@@ -180,20 +162,18 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
     } catch (e: any) {
       if (e?.name !== "AbortError") console.error(e);
     } finally {
-      // Only clear loading if this request wasn't aborted
       if (!ac.signal.aborted) setIsLoading(false);
     }
-  }, [activeCategory]);
+  }, [activeCategory, locale]);
 
   useEffect(() => { loadDocs(); }, [loadDocs]);
 
-  // Load orders on mount and after seed-demo completes
-  const loadOrdersCount = useCallback(async () => {
+  const loadOrdersList = useCallback(async () => {
     try {
       const res = await fetch("/manage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "list_orders" }),
+        body: JSON.stringify({ action: "list_orders", locale }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -202,9 +182,9 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
         }
       }
     } catch {}
-  }, []);
+  }, [locale]);
 
-  useEffect(() => { loadOrdersCount(); }, [loadOrdersCount]);
+  useEffect(() => { loadOrdersList(); }, [loadOrdersList]);
 
   const handleViewDoc = async (docId: string, category: string, filename: string) => {
     setLoadingContent(true);
@@ -212,7 +192,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
       const res = await fetch("/manage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "get", docId, category }),
+        body: JSON.stringify({ action: "get", docId, category, locale }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -222,12 +202,12 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
   };
 
   const handleDelete = async (docId: string, category: string) => {
-    if (!confirm("确定删除此文档？")) return;
+    if (!confirm(t("ui.manage.form.confirmDelete"))) return;
     try {
       await fetch("/manage", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", docId, category }),
+        body: JSON.stringify({ action: "delete", docId, category, locale }),
       });
       setDocs(prev => prev.filter(d => d.docId !== docId));
     } catch {}
@@ -236,17 +216,16 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploadProgress("读取文件...");
+    setUploadProgress(t("upload.parsing", { filename: file.name }));
     const reader = new FileReader();
     reader.onload = async () => {
       const base64 = (reader.result as string).split(",")[1];
-      setUploadProgress("上传处理中...");
       const uploadCategory = activeCategory !== "all" ? activeCategory : formCategory;
       try {
         const res = await fetch("/upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ file: base64, filename: file.name, category: uploadCategory }),
+          body: JSON.stringify({ file: base64, filename: file.name, category: uploadCategory, locale }),
         });
         if (!res.ok) throw new Error("Upload failed");
         const reader2 = res.body?.getReader();
@@ -270,7 +249,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
           }
         }
       } catch (err) {
-        setUploadProgress(`失败: ${(err as Error).message}`);
+        setUploadProgress(t("upload.failure", { error: (err as Error).message }));
         setTimeout(() => setUploadProgress(""), 3000);
       }
     };
@@ -280,12 +259,12 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
 
   const handleAddText = async () => {
     if (!formTitle.trim() || !formContent.trim()) return;
-    setUploadProgress("保存中...");
+    setUploadProgress(t("upload.saving"));
     try {
       const res = await fetch("/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: formContent, title: formTitle, category: formCategory }),
+        body: JSON.stringify({ text: formContent, title: formTitle, category: formCategory, locale }),
       });
       if (!res.ok) throw new Error("Save failed");
       const reader = res.body?.getReader();
@@ -309,24 +288,29 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                 setFormTitle("");
                 setFormContent("");
                 loadDocs();
+                loadOrdersList();
               }
             } catch {}
           }
         }
       }
     } catch (err) {
-      setUploadProgress(`失败: ${(err as Error).message}`);
+      setUploadProgress(t("upload.failure", { error: (err as Error).message }));
       setTimeout(() => setUploadProgress(""), 3000);
     }
   };
 
   const handleSeedDemo = async () => {
-    setDemoProgress("正在准备导入...");
+    setDemoProgress(t("ui.manage.demo.preparing"));
     setDemoCurrentDoc(null);
     setDemoImportedCount(0);
     setDemoTotal(0);
     try {
-      const res = await fetch("/seed-demo", { method: "POST", headers: { "Content-Type": "application/json" } });
+      const res = await fetch("/seed-demo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locale }),
+      });
       if (!res.ok) throw new Error("Seed failed");
       const reader = res.body?.getReader();
       if (reader) {
@@ -357,25 +341,27 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                 setDemoImportedCount(0);
                 setDemoTotal(0);
                 loadDocs();
-                loadOrdersCount();
+                loadOrdersList();
               }
             } catch {}
           }
         }
       }
     } catch (err) {
-      setDemoProgress(`失败: ${(err as Error).message}`);
+      setDemoProgress(t("upload.failure", { error: (err as Error).message }));
       setTimeout(() => { setDemoProgress(""); setDemoCurrentDoc(null); }, 3000);
     }
   };
 
   const catMeta = (cat: string) => CATEGORIES.find(c => c.value === cat);
+  const statusLabelOf = (s: string) => t(`status.${s}`);
+  const orderTagLabel = t("ui.manage.label.order");
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="h-12 flex items-center justify-between px-4 border-b border-gray-100 flex-shrink-0">
-        <span className="text-[13px] font-semibold text-gray-800">知识库</span>
+        <span className="text-[13px] font-semibold text-gray-800">{t("ui.manage.title")}</span>
         <button onClick={onClose} className="w-6 h-6 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors text-lg leading-none">&times;</button>
       </div>
 
@@ -386,7 +372,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
           className={`text-[11px] px-2.5 py-1 rounded-md font-medium transition-all ${
             activeCategory === "all" ? "bg-gray-900 text-white shadow-sm" : "text-gray-500 hover:bg-gray-100"
           }`}
-        >全部</button>
+        >{t("ui.manage.tabAll")}</button>
         {CATEGORIES.map(cat => (
           <button
             key={cat.value}
@@ -403,29 +389,27 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
         <button
           onClick={() => fileInputRef.current?.click()}
           className="text-[11px] h-7 px-2.5 rounded-md bg-gray-900 text-white font-medium hover:bg-gray-800 transition-colors"
-        >上传文件</button>
+        >{t("ui.manage.btn.upload")}</button>
         <button
           onClick={() => {
-            // Sync category when opening the form
             if (!showAddForm && activeCategory !== "all") {
               setFormCategory(activeCategory);
             }
             setShowAddForm(!showAddForm);
           }}
           className="text-[11px] h-7 px-2.5 rounded-md border border-gray-200 text-gray-700 font-medium hover:bg-gray-50 transition-colors"
-        >+ 手动录入</button>
+        >{t("ui.manage.btn.addManual")}</button>
         <button
           onClick={handleSeedDemo}
           disabled={!!demoProgress}
           className="text-[11px] h-7 px-2.5 rounded-md bg-indigo-50 text-indigo-600 font-medium hover:bg-indigo-100 border border-indigo-200 disabled:opacity-50 transition-colors ml-auto"
-        >🚀 导入 Demo</button>
+        >{t("ui.manage.btn.importDemo")}</button>
         <input ref={fileInputRef} type="file" className="hidden" accept=".txt,.md,.pdf,.docx,.doc,.xlsx,.xls,.csv,.json" onChange={handleFileUpload} />
       </div>
 
       {/* Demo import progress */}
       {(demoProgress || demoCurrentDoc) && (
         <div className="px-3 py-2.5 bg-indigo-50 border-b border-indigo-100 flex-shrink-0 space-y-2">
-          {/* Status line */}
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
             <span className="text-[11px] text-indigo-700 font-medium flex-1 truncate">{demoProgress}</span>
@@ -433,7 +417,6 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
               <span className="text-[10px] text-indigo-400 flex-shrink-0">{demoImportedCount}/{demoTotal}</span>
             )}
           </div>
-          {/* Progress bar */}
           {demoTotal > 0 && (
             <div className="h-1 bg-indigo-100 rounded-full overflow-hidden">
               <div
@@ -442,7 +425,6 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
               />
             </div>
           )}
-          {/* Current doc being imported */}
           {demoCurrentDoc && (
             <div className="flex items-center gap-2 py-1 px-2 bg-white rounded-md border border-indigo-100">
               <span className="text-[11px] flex-shrink-0">{CATEGORIES.find(c => c.value === demoCurrentDoc.category)?.icon || "📄"}</span>
@@ -453,7 +435,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      {/* Progress */}
+      {/* Upload progress */}
       {uploadProgress && (
         <div className="px-3 py-1.5 bg-indigo-50 flex items-center gap-2 flex-shrink-0">
           <div className="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
@@ -477,7 +459,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                   setFormContent(example.content);
                 }
               }}
-              placeholder={formCategory === "order_doc" ? "订单号（按 Tab 填入完整示例）" : "文档标题"}
+              placeholder={formCategory === "order_doc" ? t("ui.manage.form.titleOrderPlaceholder") : t("ui.manage.form.titlePlaceholder")}
               className="flex-1 text-[12px] h-8 border border-gray-200 rounded-md px-3 bg-white focus:ring-1 focus:ring-indigo-300 outline-none"
             />
             <select
@@ -490,7 +472,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
           </div>
           {formCategory === "order_doc" ? (
             <div className="space-y-2">
-              <p className="text-[10px] text-gray-400">录入订单信息，AI 将根据此信息回答用户的售后问题</p>
+              <p className="text-[10px] text-gray-400">{t("ui.manage.form.orderHelper")}</p>
               <textarea
                 value={formContent}
                 onChange={e => setFormContent(e.target.value)}
@@ -503,7 +485,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                     setFormContent(example.content);
                   }
                 }}
-                placeholder={"按 Tab 填入示例，或手动输入：\n商品：智能手表 Ultra\n规格：钛金属 / 49mm\n数量：1\n金额：¥3999\n状态：已签收\n下单时间：2025-05-18\n快递：圆通快递 YT9876543210\n备注：用户要求开发票"}
+                placeholder={t("ui.manage.form.orderPlaceholder")}
                 rows={7}
                 className="w-full text-[12px] border border-gray-200 rounded-md px-3 py-2 bg-white resize-none focus:ring-1 focus:ring-indigo-300 outline-none font-mono"
               />
@@ -512,18 +494,18 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
             <textarea
               value={formContent}
               onChange={e => setFormContent(e.target.value)}
-              placeholder="文档内容（支持多段落）..."
+              placeholder={t("ui.manage.form.contentPlaceholder")}
               rows={5}
               className="w-full text-[12px] border border-gray-200 rounded-md px-3 py-2 bg-white resize-none focus:ring-1 focus:ring-indigo-300 outline-none"
             />
           )}
           <div className="flex justify-end gap-2">
-            <button onClick={() => setShowAddForm(false)} className="text-[11px] h-7 px-3 rounded-md text-gray-500 hover:bg-gray-100">取消</button>
+            <button onClick={() => setShowAddForm(false)} className="text-[11px] h-7 px-3 rounded-md text-gray-500 hover:bg-gray-100">{t("ui.manage.form.cancel")}</button>
             <button
               onClick={handleAddText}
               disabled={!formTitle.trim() || !formContent.trim()}
               className="text-[11px] h-7 px-3 rounded-md bg-indigo-600 text-white font-medium hover:bg-indigo-700 disabled:opacity-40 transition-colors"
-            >保存</button>
+            >{t("ui.manage.form.save")}</button>
           </div>
         </div>
       )}
@@ -531,10 +513,10 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
       {/* Document list */}
       <div className="flex-1 overflow-y-auto">
         {(() => {
-          // Determine which orders to show based on active tab
           const showOrders = activeCategory === "all" || activeCategory === "order_doc";
           const visibleOrders = showOrders ? orders : [];
           const isEmpty = docs.length === 0 && visibleOrders.length === 0;
+          const sep = locale === "en" ? ", " : "、";
 
           if (isLoading) {
             return (
@@ -549,8 +531,8 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                 <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center mx-auto mb-3">
                   <span className="text-xl">⚠️</span>
                 </div>
-                <p className="text-[13px] text-amber-700 font-medium">存储服务不可用</p>
-                <p className="text-[11px] text-gray-400 mt-1">知识库功能需要部署到 EdgeOne Makers 后才能使用</p>
+                <p className="text-[13px] text-amber-700 font-medium">{t("ui.manage.empty.unavailableTitle")}</p>
+                <p className="text-[11px] text-gray-400 mt-1">{t("ui.manage.empty.unavailableHint")}</p>
               </div>
             );
           }
@@ -560,18 +542,18 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                 <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
                   <span className="text-xl opacity-50">📄</span>
                 </div>
-                <p className="text-[13px] text-gray-500 font-medium">暂无文档</p>
-                <p className="text-[11px] text-gray-400 mt-1">点击右上角「🚀 导入 Demo」快速体验</p>
+                <p className="text-[13px] text-gray-500 font-medium">{t("ui.manage.empty.title")}</p>
+                <p className="text-[11px] text-gray-400 mt-1">{t("ui.manage.empty.hint")}</p>
               </div>
             );
           }
           return (
             <div className="divide-y divide-gray-50">
-              {/* Real orders (only on 全部 / 订单 tab) */}
+              {/* Real orders */}
               {visibleOrders.map(order => {
-                const itemNames = order.items.map(i => i.name).join("、");
-                const statusLabel = STATUS_LABELS[order.status] || order.status;
-                const statusColor = STATUS_COLORS[order.status] || "bg-gray-100 text-gray-500";
+                const itemNames = order.items.map(i => i.name).join(sep);
+                const sLabel = statusLabelOf(order.status);
+                const sColor = STATUS_COLORS[order.status] || "bg-gray-100 text-gray-500";
                 return (
                   <div key={`order-${order.orderId}`} className="group px-3 py-3 hover:bg-gray-50/50 transition-colors">
                     <div className="flex items-start gap-2.5">
@@ -581,10 +563,10 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-[12px] font-medium text-gray-900 truncate">{order.orderId}</span>
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${statusColor}`}>
-                            {statusLabel}
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${sColor}`}>
+                            {sLabel}
                           </span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-500 flex-shrink-0">订单</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-50 text-purple-500 flex-shrink-0">{orderTagLabel}</span>
                         </div>
                         <p className="text-[11px] text-gray-400 mt-0.5 line-clamp-1">{itemNames}</p>
                         <div className="flex items-center gap-1.5 mt-1.5">
@@ -605,13 +587,11 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
               {/* Knowledge base docs */}
               {docs.map(doc => {
                 const isOrderDoc = doc.category === "order_doc" && ORDER_FILENAME_RE.test(doc.filename);
-                // Prefer parsed status from backend, fall back to summary/keywords detection
                 const detectedStatus = isOrderDoc
                   ? (doc.status || detectStatusFromText(`${doc.summary} ${(doc.keywords || []).join(" ")}`))
                   : null;
-                const statusLabel = detectedStatus ? STATUS_LABELS[detectedStatus] : null;
-                const statusColor = detectedStatus ? STATUS_COLORS[detectedStatus] : null;
-                // For order_doc, prefer parsed itemNames over AI summary
+                const sLabel = detectedStatus ? statusLabelOf(detectedStatus) : null;
+                const sColor = detectedStatus ? STATUS_COLORS[detectedStatus] : null;
                 const description = isOrderDoc && doc.itemNames ? doc.itemNames : doc.summary;
                 return (
                 <div key={doc.docId} className="group px-3 py-3 hover:bg-gray-50/50 transition-colors">
@@ -622,9 +602,9 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-[12px] font-medium text-gray-900 truncate">{doc.filename}</span>
-                        {statusLabel && statusColor && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${statusColor}`}>
-                            {statusLabel}
+                        {sLabel && sColor && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${sColor}`}>
+                            {sLabel}
                           </span>
                         )}
                         <span className={`text-[10px] px-1.5 py-0.5 rounded flex-shrink-0 ${isOrderDoc ? "bg-purple-50 text-purple-500" : "bg-gray-100 text-gray-500"}`}>
@@ -644,7 +624,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                             {doc.totalAmount !== undefined ? (
                               <span className="text-[10px] text-gray-400 ml-auto">¥{doc.totalAmount}</span>
                             ) : (
-                              <span className="text-[10px] text-gray-300 ml-auto">{doc.charCount}字</span>
+                              <span className="text-[10px] text-gray-300 ml-auto">{t("ui.manage.unitChars", { n: doc.charCount })}</span>
                             )}
                           </>
                         ) : (
@@ -652,7 +632,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                             {doc.keywords?.slice(0, 3).map(kw => (
                               <span key={kw} className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600">{kw}</span>
                             ))}
-                            <span className="text-[10px] text-gray-300 ml-auto">{doc.charCount}字</span>
+                            <span className="text-[10px] text-gray-300 ml-auto">{t("ui.manage.unitChars", { n: doc.charCount })}</span>
                           </>
                         )}
                       </div>
@@ -660,7 +640,7 @@ export function ManagePanel({ onClose }: { onClose: () => void }) {
                     <button
                       onClick={() => handleViewDoc(doc.docId, doc.category, doc.filename)}
                       className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-gray-400 hover:text-indigo-500 hover:bg-indigo-50 transition-all flex-shrink-0"
-                      title="查看原文"
+                      title={t("ui.manage.viewDoc")}
                     >
                       <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />

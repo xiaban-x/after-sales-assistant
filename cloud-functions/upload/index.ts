@@ -11,6 +11,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { createLogger, createModel, sseEvent, createSSEResponse } from "../../agents/_shared";
 import { saveDoc, findDocByFilename, removeDoc, type DocCategory } from "../../lib/doc-store";
 import { parseDocument } from "../../lib/parser";
+import { t, getLocale, type Locale } from "../../agents/_i18n";
 
 const logger = createLogger("upload");
 
@@ -22,22 +23,37 @@ const VALID_CATEGORIES: DocCategory[] = ["faq", "policy", "product", "order_doc"
 async function generateSummary(
   content: string,
   filename: string,
-  category: string
+  category: string,
+  locale: Locale
 ): Promise<{ summary: string; keywords: string[] }> {
   const model = createModel();
 
   const truncated = content.length > 8000 ? content.slice(0, 8000) + "\n...[truncated]" : content;
 
-  const response = await model.invoke([
-    new SystemMessage(`你是一个文档摘要助手。给定一个文档，生成：
+  const sysPrompt = locale === "en"
+    ? `You are a document summarizer. Given a document, generate:
+1. A concise summary (within 200 words) describing the core content and purpose.
+2. 5-10 keywords covering the main topics.
+
+Document category: ${category}
+
+Output STRICT JSON only (no other text):
+{"summary": "...", "keywords": ["k1", "k2", ...]}`
+    : `你是一个文档摘要助手。给定一个文档，生成：
 1. 简明摘要（200字以内），概述核心内容和用途。
 2. 5-10个关键词，涵盖文档的主要主题。
 
 文档分类：${category}
 
 输出严格 JSON 格式（不含其他文本）：
-{"summary": "...", "keywords": ["关键词1", "关键词2", ...]}`),
-    new HumanMessage(`文件名: ${filename}\n\n文档内容:\n${truncated}`),
+{"summary": "...", "keywords": ["关键词1", "关键词2", ...]}`;
+  const userPrompt = locale === "en"
+    ? `Filename: ${filename}\n\nContent:\n${truncated}`
+    : `文件名: ${filename}\n\n文档内容:\n${truncated}`;
+
+  const response = await model.invoke([
+    new SystemMessage(sysPrompt),
+    new HumanMessage(userPrompt),
   ]);
 
   const text = typeof response.content === "string" ? response.content : "";
@@ -63,6 +79,7 @@ export async function onRequest(context: any) {
   const { request } = context;
   const body = request?.body ?? {};
   const { file, filename, category, text, title } = body;
+  const locale = getLocale(body);
 
   // Get store (cloud-functions use context.agent?.store)
   const store = context.agent?.store ?? context.store ?? null;
@@ -97,7 +114,7 @@ export async function onRequest(context: any) {
   async function* streamUpload(): AsyncGenerator<string> {
     try {
       // Step 1: Parsing
-      yield sseEvent({ type: "progress", stage: "parsing", message: `正在解析文档: ${docFilename}` });
+      yield sseEvent({ type: "progress", stage: "parsing", message: t(locale, "upload.parsing", { filename: docFilename }) });
 
       let extractedText: string;
 
@@ -108,12 +125,12 @@ export async function onRequest(context: any) {
       }
 
       if (!extractedText || extractedText.trim().length < 10) {
-        yield sseEvent({ type: "error_message", content: "无法从文档中提取有效文本内容。" });
+        yield sseEvent({ type: "error_message", content: t(locale, "upload.noText") });
         return;
       }
 
       logger.log(`Extracted ${extractedText.length} chars from ${docFilename}`);
-      yield sseEvent({ type: "progress", stage: "parsed", message: `解析完成，提取 ${extractedText.length} 字符` });
+      yield sseEvent({ type: "progress", stage: "parsed", message: t(locale, "upload.parseDone", { chars: extractedText.length }) });
 
       // Step 2: Check for existing document (deduplication)
       const existing = await findDocByFilename(store, category, docFilename);
@@ -124,13 +141,13 @@ export async function onRequest(context: any) {
       }
 
       // Step 3: Generate summary
-      yield sseEvent({ type: "progress", stage: "summarizing", message: "正在生成摘要和关键词..." });
+      yield sseEvent({ type: "progress", stage: "summarizing", message: t(locale, "upload.summarizing") });
 
-      const { summary, keywords } = await generateSummary(extractedText, docFilename, category);
+      const { summary, keywords } = await generateSummary(extractedText, docFilename, category, locale);
       logger.log(`Summary generated for ${docFilename}: ${summary.slice(0, 60)}...`);
 
       // Step 4: Save to store
-      yield sseEvent({ type: "progress", stage: "saving", message: "正在保存文档..." });
+      yield sseEvent({ type: "progress", stage: "saving", message: t(locale, "upload.saving") });
 
       await saveDoc(store, category, finalDocId, docFilename, extractedText, summary, keywords);
 
@@ -149,7 +166,7 @@ export async function onRequest(context: any) {
       });
     } catch (e) {
       logger.error("Upload error:", (e as Error).message);
-      yield sseEvent({ type: "error_message", content: `上传失败: ${(e as Error).message}` });
+      yield sseEvent({ type: "error_message", content: t(locale, "upload.failure", { error: (e as Error).message }) });
     }
   }
 
