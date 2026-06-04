@@ -1,5 +1,8 @@
 /**
- * Document Upload — handles document upload for the after-sales knowledge base.
+ * Document Upload Agent — handles document upload for the after-sales knowledge base.
+ *
+ * Migrated from cloud-functions/upload to bypass the 30s cloud-function timeout
+ * (large documents need significant LLM time for summary generation).
  *
  * Accepts POST with:
  * - file (base64 content) + filename + category
@@ -8,10 +11,10 @@
  * Streams progress via SSE: parsing → summarizing → saved.
  */
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { createLogger, createModel, sseEvent, createSSEResponse } from "../../agents/_shared";
+import { createLogger, createModel, sseEvent, createSSEResponse } from "../_shared";
 import { saveDoc, findDocByFilename, removeDoc, type DocCategory } from "../../lib/doc-store";
 import { parseDocument } from "../../lib/parser";
-import { t, getLocale, type Locale } from "../../agents/_i18n";
+import { t, getLocale, type Locale } from "../_i18n";
 
 const logger = createLogger("upload");
 
@@ -81,8 +84,8 @@ export async function onRequest(context: any) {
   const { file, filename, category, text, title } = body;
   const locale = getLocale(body);
 
-  // Get store (cloud-functions use context.agent?.store)
-  const store = context.agent?.store ?? context.store ?? null;
+  // Agents access the store directly via context.store
+  const store = context.store ?? null;
   if (!store) {
     return new Response(JSON.stringify({
       error: "STORE_NOT_CONFIGURED",
@@ -90,7 +93,6 @@ export async function onRequest(context: any) {
     }), { status: 503, headers: { "Content-Type": "application/json" } });
   }
 
-  // Validate category
   if (!category || !VALID_CATEGORIES.includes(category)) {
     return new Response(JSON.stringify({ error: `Invalid category. Must be one of: ${VALID_CATEGORIES.join(", ")}` }), {
       status: 400,
@@ -98,7 +100,6 @@ export async function onRequest(context: any) {
     });
   }
 
-  // Must have either file+filename or text+title
   const hasFile = file && filename;
   const hasText = text && title;
   if (!hasFile && !hasText) {
